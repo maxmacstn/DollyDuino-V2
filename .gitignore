@@ -1,2 +1,8 @@
 
 .DS_Store
+
+/DollyDuino-V2/.pio
+/DollyDuino-V2/.vscode/.browse.c_cpp.db*
+/DollyDuino-V2/.vscode/c_cpp_properties.json
+/DollyDuino-V2/.vscode/launch.json
+/DollyDuino-V2/.vscode/ipch
