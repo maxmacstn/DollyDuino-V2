@@ -5,7 +5,7 @@
 #include <MultiStepper.h>
 #include <Arduino.h>
 #include <LiquidCrystal_I2C.h>
-#include <CanonBLERemote.h>
+#include "AlphaBLERemote.h"
 
 #define PIN_SLIDE_STEP 26
 #define PIN_SLIDE_DIR 27
@@ -26,6 +26,8 @@
 #define QUARTER_STEP 4
 #define EIGHTH_STEP 8
 #define SIXTEENTH_STEP 16
+#define THIRTYSECOND_STEP 32
+#define SIXTYFOURTH_STEP 64
 
 #define PAN_GEAR_RATIO 2.75
 #define SLIDER_PULLEY_TEETH 20
@@ -128,15 +130,15 @@ private:
     };
   
     String modeString[TOTAL_MODE] = {"INIT", "SLIDE", "ORBIT", "TIMELAPSE","SETTINGS"};
-    bool useEOSRemote = true;
+    bool useBLERemote = true;
     unsigned int timelapseDuration[8] = {1,5,10,20,30,60,90,120};
     uint8_t timelapseInterval = 0;
     uint8_t timelapseShutterTime = 1;
     byte timelapseSelectedtime = 4;
-    byte eosPairingProcess = 0; //0 = idle, 1 = paring, 2 = pair success, 3 = pair failed
+    byte BLEPairingProcess = 0; //0 = idle, 1 = paring, 2 = pair success, 3 = pair failed
     Mode currentMode = SLIDE;
-    float pan_steps_per_degree = (200.0 * SIXTEENTH_STEP * PAN_GEAR_RATIO) / 360.0;           //Stepper motor has 200 steps per 360 degrees
-    float slider_steps_per_millimetre = (200.0 * SIXTEENTH_STEP) / (SLIDER_PULLEY_TEETH * 2); //Stepper motor has 200 steps per 360 degrees, the timing pully has 20 teeth and the belt has a pitch of 2mm
+    float pan_steps_per_degree = (200.0 * THIRTYSECOND_STEP * PAN_GEAR_RATIO) / 360.0;           //Stepper motor has 200 steps per 360 degrees
+    float slider_steps_per_millimetre = (200.0 * THIRTYSECOND_STEP) / (SLIDER_PULLEY_TEETH * 2); //Stepper motor has 200 steps per 360 degrees, the timing pully has 20 teeth and the belt has a pitch of 2mm
     float panSpeed = MAX_PAN_SPEED;                                                                   //degree per second
     float slideSpeed = MAX_SLIDE_SPEED;                                                                 //mm per second
     long target_position[3];                                                                  //Array to store stepper motor step counts
@@ -153,22 +155,22 @@ private:
     unsigned long lastScreenUpdate = 0;
     unsigned long lastShotTime = 0;
     bool autoMoveRunning = false;
-    CanonBLERemote canonBLERemote = CanonBLERemote("DollyDuino 2.0");
+    AlphaBLERemote alphaBLERemote = AlphaBLERemote("DollyDuino 2.0");
 
     void initStepper();
     int addPosition();
     void clearKeyframes();
     void printKeyframeElements();
-    void interpolateTargetPoint(FloatCoordinate, int);
+    void interpolateTargetPoint(FloatCoordinate, int, bool preview = false);
     bool calculateTargetCoordinate();
     void goToTargetPosition(float panDeg, float sliderMillimetre, bool isBlocking);
     // float panStepsToDegrees(float);
     float panStepsToDegrees(long);
-    int setTargetPositions(float panDeg, float sliderMillimetre);
+    void setTargetPositions(float panDeg, float sliderMillimetre);
     void doSlide();
     void doTimelapse();
     void triggerCamera();
-    void pairEOSCamera();
+    void pairCamera();
 };
 
 #endif

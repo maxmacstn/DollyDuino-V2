@@ -17,28 +17,29 @@ void Slider::init()
     pinMode(PIN_SLIDER_LIMIT_LEFT, INPUT_PULLUP);
     pinMode(PIN_SLIDER_LIMIT_RIGHT, INPUT_PULLUP);
 
-    //Setup stepper
+    // Setup stepper
     initStepper();
     multiStepper.addStepper(stepper_slide);
     multiStepper.addStepper(stepper_pan);
 
-    //setup AUX pin
+    // setup AUX pin
     pinMode(PIN_AUX_IO_1, OUTPUT);
     digitalWrite(PIN_AUX_IO_1, LOW);
 
-    //init canon BLE remote lib
-    canonBLERemote.init();
-    
+    // init canon BLE remote lib
+    alphaBLERemote.init();
 
     Serial.println("Init Complete");
     // lcd.clear();
 }
 
-void Slider::displayBootMessage(String msg){
-    lcd.setCursor(0,1);
+void Slider::displayBootMessage(String msg)
+{
+    lcd.setCursor(0, 1);
     lcd.print("                ");
-    if (msg.length() < 16){
-        lcd.setCursor(7 - (msg.length()/2), 1 );
+    if (msg.length() < 16)
+    {
+        lcd.setCursor(7 - (msg.length() / 2), 1);
         lcd.print(msg);
     }
 }
@@ -63,7 +64,7 @@ void Slider::initStepper()
     pinMode(PIN_MS3, OUTPUT);
     pinMode(PIN_MOTOR_EN, OUTPUT);
     digitalWrite(PIN_MS1, HIGH);
-    digitalWrite(PIN_MS2, HIGH);
+    digitalWrite(PIN_MS2, LOW);
     digitalWrite(PIN_MS3, HIGH);
     digitalWrite(PIN_MOTOR_EN, LOW);
     stepper_pan = AccelStepper(1, PIN_PAN_STEP, PIN_PAN_DIR);
@@ -79,43 +80,55 @@ void Slider::initStepper()
     stepper_pan.setCurrentPosition(currentPanPos);
 }
 
+void Slider::pairCamera()
+{
 
-
-void Slider::pairEOSCamera(){
-
-    if (eosPairingProcess == 0){
-        Serial.println("Pair EOS Camera");
-        eosPairingProcess = 1;
+    if (BLEPairingProcess == 0)
+    {
+        Serial.println("Pair Sony Alpha Camera");
+        BLEPairingProcess = 1;
         updateScreen(1);
-            bool res = false;
-            for (int i = 0; i < 5; i++){
-                res =  canonBLERemote.pair(5);
-                if (res)
-                    break;
-            }
-            if (res){
-                Serial.println("Pairing success");
-                eosPairingProcess = 2;
-            }else{
-                Serial.println("Pairing failed");
-                eosPairingProcess = 3;
-            }
+        bool res = false;
+        res = alphaBLERemote.pair(20);
+        if (res)
+        {
+            Serial.println("Pairing success");
+            BLEPairingProcess = 2;
             updateScreen(1);
-            delay(1000);
-            eosPairingProcess = 0;
-            updateScreen(1);
-
+            delay(2000);
+            ESP.restart();
+        }
+        else
+        {
+            Serial.println("Pairing failed");
+            BLEPairingProcess = 3;
+        }
+        updateScreen(1);
+        delay(1000);
+        BLEPairingProcess = 0;
+        updateScreen(1);
     }
 }
 
-void Slider::onAddKeyFrameButtonPressed(){
+void Slider::onAddKeyFrameButtonPressed()
+{
     Serial.println("onAddKeyFrameButtonPressed");
     switch (currentMode)
     {
-   
+
     case ORBIT:
+        if (current_keyframe_index == 1) // Preview shot
+        {
+            if (calculateTargetCoordinate())
+            {
+                interpolateTargetPoint(intercept, 1, true);
+            }
+            break;
+        }
+
         addPosition();
         printKeyframeElements();
+
         break;
     case SLIDE:
         addPosition();
@@ -135,7 +148,7 @@ void Slider::onActionButtonPressed()
     Serial.println("OnActionButtonPressed");
     switch (currentMode)
     {
-   
+
     case ORBIT:
         triggerCamera();
         break;
@@ -146,7 +159,7 @@ void Slider::onActionButtonPressed()
         triggerCamera();
         break;
     case SETTINGS:
-        pairEOSCamera();
+        pairCamera();
     default:
         break;
     }
@@ -205,29 +218,31 @@ void Slider::onLTButtonPressed()
     {
         if (timelapseShutterTime > 0)
         {
-            timelapseShutterTime -- ;
+            timelapseShutterTime--;
         }
     }
-
 }
 
-void Slider::onRTButtonPressed(){
-        if (currentMode == TIMELAPSE)
+void Slider::onRTButtonPressed()
+{
+    if (currentMode == TIMELAPSE)
     {
-        if (timelapseShutterTime <30 )
+        if (timelapseShutterTime < 30)
         {
-            timelapseShutterTime ++;
+            timelapseShutterTime++;
         }
     }
 }
-void Slider::onUpButtonPressed(){
-    if(currentMode == TIMELAPSE && timelapseInterval < 9 )
-        timelapseInterval ++;
+void Slider::onUpButtonPressed()
+{
+    if (currentMode == TIMELAPSE && timelapseInterval < 9)
+        timelapseInterval++;
 }
 
-void Slider::onDnButtonPressed(){
-    if(currentMode == TIMELAPSE && timelapseInterval > 0)
-        timelapseInterval --;
+void Slider::onDnButtonPressed()
+{
+    if (currentMode == TIMELAPSE && timelapseInterval > 0)
+        timelapseInterval--;
 }
 
 uint32_t Slider::panDegreeToStep(float angle)
@@ -306,33 +321,44 @@ void Slider::onPreviousModeButtonPressed()
     Serial.printf("CURRENT MODE = %d\n", currentMode);
 }
 
-void Slider::interpolateTargetPoint(FloatCoordinate targetPoint, int repeat)
-{ //The first two keyframes are interpolated between while keeping the camera pointing at previously calculated intercept point.
+void Slider::interpolateTargetPoint(FloatCoordinate targetPoint, int repeat, bool preview)
+{ // The first two keyframes are interpolated between while keeping the camera pointing at previously calculated intercept point.
     if (keyframe_elements < 2)
     {
         printi(F("Not enough keyframes recorded\n"));
-        return; //check there are posions to move to
+        return; // check there are posions to move to
     }
 
-    float sliderStartPos = sliderStepsToMillimetres(keyframe_array[0].sliderStepCount); //slider start position
-    float sliderEndPos = sliderStepsToMillimetres(keyframe_array[1].sliderStepCount);
-    float panAngle = 0;
-    float x = targetPoint.x - sliderStepsToMillimetres(keyframe_array[0].sliderStepCount);
-    float ySqared = pow(targetPoint.y, 2);
-    float sliderTravel = sliderStepsToMillimetres(keyframe_array[1].sliderStepCount) - sliderStepsToMillimetres(keyframe_array[0].sliderStepCount);
+    double sliderStartPos = sliderStepsToMillimetres(keyframe_array[0].sliderStepCount); // slider start position
+    double sliderEndPos = sliderStepsToMillimetres(keyframe_array[1].sliderStepCount);
+    double panAngle = 0;
+    double x = targetPoint.x - sliderStepsToMillimetres(keyframe_array[0].sliderStepCount);
+    double ySqared = pow(targetPoint.y, 2);
+    double sliderTravel = sliderStepsToMillimetres(keyframe_array[1].sliderStepCount) - sliderStepsToMillimetres(keyframe_array[0].sliderStepCount);
     int numberOfIncrements = abs(sliderTravel);
-    float increment = sliderTravel / numberOfIncrements; //size of interpolation increments in mm
+    double increment = sliderTravel / numberOfIncrements; // size of interpolation increments in mm
 
     autoMoveRunning = true;
     updateScreen(true);
 
-    //Go to 1st position
+    // Go to 1st position
+
+    stepper_pan.setMaxSpeed(panDegreesToSteps(MAX_PAN_SPEED*0.7));
+    stepper_slide.setMaxSpeed(sliderMillimetresToSteps(MAX_SLIDE_SPEED*0.7));
+
     setTargetPositions(panStepsToDegrees(keyframe_array[0].panStepCount), sliderStartPos);
-    multiStepper.runSpeedToPosition(); //blocking move to the next position
-       if (canonBLERemote.isConnected()){
-                triggerCamera();
-            }
-    delay(1000);
+    multiStepper.runSpeedToPosition(); // blocking move to the next position
+    if (alphaBLERemote.isConnected() && !preview)
+    {
+        triggerCamera();
+    }
+
+    if (preview)
+    {
+        stepper_pan.setMaxSpeed(panDegreesToSteps(MAX_PAN_SPEED * 0.7));
+        stepper_slide.setMaxSpeed(sliderMillimetresToSteps(MAX_SLIDE_SPEED * 0.7));
+    }
+    delay(2000);
 
     Serial.println(numberOfIncrements);
     for (int j = 0; (j < repeat || (repeat == 0 && j == 0)); j++)
@@ -340,44 +366,64 @@ void Slider::interpolateTargetPoint(FloatCoordinate targetPoint, int repeat)
 
         for (int i = 0; i <= numberOfIncrements; i++)
         {
+            if (!preview)
+            {
+                float multiplier = (1 + i) / (numberOfIncrements / 10.0);
+                if (multiplier > 1)
+                    multiplier = 1;
+                stepper_pan.setMaxSpeed(panDegreesToSteps(MAX_PAN_SPEED * currentSpeedScale * multiplier));
+                stepper_slide.setMaxSpeed(sliderMillimetresToSteps(MAX_SLIDE_SPEED * currentSpeedScale * multiplier));
+            }
 
             x = targetPoint.x - (sliderStartPos + increment * i);
             panAngle = radsToDeg(atan2(targetPoint.y, x));
             setTargetPositions(panAngle, sliderStartPos + increment * i);
-            multiStepper.runSpeedToPosition(); //blocking move to the next position
+            multiStepper.runSpeedToPosition(); // blocking move to the next position
         }
         delay(1000);
         x = targetPoint.x - sliderEndPos;
         panAngle = radsToDeg(atan2(targetPoint.y, x));
         setTargetPositions(panAngle, sliderEndPos);
-        multiStepper.runSpeedToPosition(); //blocking move to the next position
+        multiStepper.runSpeedToPosition(); // blocking move to the next position
 
         delay(1000);
 
         for (int i = numberOfIncrements; (i >= 0 && repeat > 0); i--)
-        {
+        {   
+            if (!preview)
+            {
+                float multiplier = (1 + (numberOfIncrements - i)) / (numberOfIncrements / 10.0);
+                if (multiplier > 1)
+                    multiplier = 1;
+                stepper_pan.setMaxSpeed(panDegreesToSteps(MAX_PAN_SPEED * currentSpeedScale * multiplier));
+                stepper_slide.setMaxSpeed(sliderMillimetresToSteps(MAX_SLIDE_SPEED * currentSpeedScale * multiplier));
+            }
+
+
             x = targetPoint.x - (sliderStartPos + increment * i);
             panAngle = radsToDeg(atan2(targetPoint.y, x));
             setTargetPositions(panAngle, sliderStartPos + increment * i);
-            multiStepper.runSpeedToPosition(); //blocking move to the next position
+            multiStepper.runSpeedToPosition(); // blocking move to the next position
         }
         if (repeat > 0)
         {
             delay(1000);
             setTargetPositions(panAngle, sliderStartPos);
-            multiStepper.runSpeedToPosition(); //blocking move to the next position
+            multiStepper.runSpeedToPosition(); // blocking move to the next position
         }
     }
 
-       if (canonBLERemote.isConnected()){
-                triggerCamera();
-            }
+    if (alphaBLERemote.isConnected()&& !preview)
+    {
+        triggerCamera();
+    }
 
     autoMoveRunning = false;
 }
 
-int Slider::setTargetPositions(float panDeg, float sliderMillimetre)
+void Slider::setTargetPositions(float panDeg, float sliderMillimetre)
 {
+    Serial.println("setTargetPositions");
     target_position[0] = sliderMillimetresToSteps(sliderMillimetre);
     target_position[1] = panDegreesToSteps(panDeg);
     multiStepper.moveTo(target_position);
@@ -393,7 +439,7 @@ int Slider::addPosition(void)
         keyframe_array[keyframe_elements].sliderSpeed = slideSpeed;
         keyframe_array[keyframe_elements].msDelay = 0;
         current_keyframe_index = keyframe_elements;
-        keyframe_elements++; //increment the index
+        keyframe_elements++; // increment the index
         Serial.print("Added at index: " + String(current_keyframe_index));
         return 0;
     }
@@ -434,24 +480,25 @@ void Slider::doSlide()
     if (keyframe_elements < 2)
     {
         printi(F("Not enough keyframes recorded\n"));
-        return; //check there are posions to move to
+        return; // check there are posions to move to
     }
 
-    float sliderStartPos = sliderStepsToMillimetres(keyframe_array[0].sliderStepCount); //slider start position
+    float sliderStartPos = sliderStepsToMillimetres(keyframe_array[0].sliderStepCount); // slider start position
     float sliderStartAngle = panStepsToDegrees(keyframe_array[0].panStepCount);
     float sliderEndPos = sliderStepsToMillimetres(keyframe_array[1].sliderStepCount);
     float sliderEndAngle = panStepsToDegrees(keyframe_array[1].panStepCount);
     float panAngle = 0;
     float sliderTravel = sliderStepsToMillimetres(keyframe_array[1].sliderStepCount) - sliderStepsToMillimetres(keyframe_array[0].sliderStepCount);
 
-    //Go to start position
+    // Go to start position
     Serial.println("Going to first frame");
     setTargetPositions(sliderStartAngle, sliderStartPos);
-    multiStepper.runSpeedToPosition(); //blocking move to the next position
+    multiStepper.runSpeedToPosition(); // blocking move to the next position
     initStepper();                     // Somehow AccelStepper is not working after using MultiStepper, so re-init is required.
     stepper_slide.setAcceleration(sliderMillimetresToSteps(sliderTravel / 20));
 
-    if (canonBLERemote.isConnected()){
+    if (alphaBLERemote.isConnected())
+    {
         triggerCamera();
     }
     autoMoveRunning = true;
@@ -463,34 +510,35 @@ void Slider::doTimelapse()
     if (keyframe_elements < 2)
     {
         printi(F("Not enough keyframes recorded\n"));
-        return; //check there are posions to move to
+        return; // check there are posions to move to
     }
 
-    float sliderStartPos = sliderStepsToMillimetres(keyframe_array[0].sliderStepCount); //slider start position
+    float sliderStartPos = sliderStepsToMillimetres(keyframe_array[0].sliderStepCount); // slider start position
     float sliderStartAngle = panStepsToDegrees(keyframe_array[0].panStepCount);
     float sliderEndPos = sliderStepsToMillimetres(keyframe_array[1].sliderStepCount);
     float sliderEndAngle = panStepsToDegrees(keyframe_array[1].panStepCount);
     float panAngle = 0;
     float sliderTravel = sliderStepsToMillimetres(keyframe_array[1].sliderStepCount) - sliderStepsToMillimetres(keyframe_array[0].sliderStepCount);
 
-    //Go to start position
+    // Go to start position
     Serial.println("Going to first frame");
     setTargetPositions(sliderStartAngle, sliderStartPos);
-    multiStepper.runSpeedToPosition(); //blocking move to the next position
+    multiStepper.runSpeedToPosition(); // blocking move to the next position
 
-    float totalMoveTime = timelapseDuration[timelapseSelectedtime] * 60.0;  //Second
-    float totalCapturingTime = 0;                                           //Second
+    float totalMoveTime = timelapseDuration[timelapseSelectedtime] * 60.0; // Second
+    float totalCapturingTime = 0;                                          // Second
     int totalShots = 0;
 
-    if(timelapseInterval){
-        totalShots = totalMoveTime / (((TRIGGER_MS+timelapseShutterTime)/1000.0) + timelapseInterval) ;
-        totalCapturingTime = totalShots * ((TRIGGER_MS+timelapseShutterTime)/1000.0);
+    if (timelapseInterval)
+    {
+        totalShots = totalMoveTime / (((TRIGGER_MS + timelapseShutterTime) / 1000.0) + timelapseInterval);
+        totalCapturingTime = totalShots * ((TRIGGER_MS + timelapseShutterTime) / 1000.0);
         totalMoveTime = totalMoveTime - totalCapturingTime;
     }
 
-    Serial.println("Total move time: "+ String(totalMoveTime));
-    Serial.println("Total capture time: "+ String(totalCapturingTime));
-    Serial.println("Total totalShots: "+ String(totalShots));
+    Serial.println("Total move time: " + String(totalMoveTime));
+    Serial.println("Total capture time: " + String(totalCapturingTime));
+    Serial.println("Total totalShots: " + String(totalShots));
 
     float moveSpeed = (keyframe_array[1].sliderStepCount - keyframe_array[0].sliderStepCount) / totalMoveTime;
     stepper_slide.setMaxSpeed(moveSpeed);
@@ -498,7 +546,7 @@ void Slider::doTimelapse()
     autoMoveRunning = true;
     updateScreen();
     delay(1000);
-    //Start recording
+    // Start recording
 }
 
 void Slider::onStartButtonPressed()
@@ -509,7 +557,7 @@ void Slider::onStartButtonPressed()
     case ORBIT:
         if (calculateTargetCoordinate())
         {
-            interpolateTargetPoint(intercept, 1);
+            interpolateTargetPoint(intercept, 1, false);
         }
         break;
     case SLIDE:
@@ -564,7 +612,7 @@ bool Slider::calculateTargetCoordinate(void)
     else
     {
         if (m1 == m2)
-        { //If the angle of the slope of both lines are the same they are parallel and cannot intercept.
+        { // If the angle of the slope of both lines are the same they are parallel and cannot intercept.
             printi(F("Positions do not intersect."));
             return false;
         }
@@ -573,7 +621,7 @@ bool Slider::calculateTargetCoordinate(void)
     }
 
     if (((panStepsToDegrees(keyframe_array[0].panStepCount) > 0 && panStepsToDegrees(keyframe_array[1].panStepCount) > 0) && intercept.y < 0) || ((panStepsToDegrees(keyframe_array[0].panStepCount) < 0 && panStepsToDegrees(keyframe_array[1].panStepCount) < 0) && intercept.y > 0) || intercept.y == 0)
-    { //Checks that the intercept point is in the direction the camera was pointing and not on the opposite side behind the camera.
+    { // Checks that the intercept point is in the direction the camera was pointing and not on the opposite side behind the camera.
         printi(F("Invalid intercept.\n"));
         return false;
     }
@@ -607,7 +655,8 @@ void Slider::onBackButtonPressed()
             autoMoveRunning = false;
             stepper_slide.setSpeed(0);
             stepper_slide.runSpeed();
-            if (canonBLERemote.isConnected()){
+            if (alphaBLERemote.isConnected())
+            {
                 triggerCamera();
             }
         }
@@ -647,21 +696,24 @@ void Slider::disableAllMotors(bool disable)
     }
 }
 
-void Slider::triggerCamera(){
+void Slider::triggerCamera()
+{
 
-    if (useEOSRemote){
-        canonBLERemote.trigger();
+    if (useBLERemote)
+    {
+        alphaBLERemote.trigger();
     }
-    else{
+    else
+    {
         digitalWrite(PIN_AUX_IO_1, HIGH);
         delay(TRIGGER_MS);
         digitalWrite(PIN_AUX_IO_1, LOW);
 
-        if (currentMode == TIMELAPSE){
+        if (currentMode == TIMELAPSE)
+        {
             delay(timelapseShutterTime);
         }
     }
-
 }
 
 void Slider::run()
@@ -670,10 +722,35 @@ void Slider::run()
     isMoving = false;
 
     if (autoMoveRunning == false)
+    
     {
-        float currentSlideSpeed = map(abs(currentAnalogStick.LposX - 128), 0, 128, 0, slideSpeed);
-        float currentPanSpeed = map(abs(currentAnalogStick.RposX - 128), 0, 128, 0, panSpeed);
 
+        float currentSlideSpeed;
+        float currentPanSpeed;
+        if (currentMode == SLIDE){
+
+            currentSlideSpeed = map(abs(currentAnalogStick.LposX - 128), 0, 128, 0, slideSpeed);
+            currentPanSpeed = map(abs(currentAnalogStick.RposX - 128), 0, 128, 0, panSpeed);
+
+
+        }else{
+
+
+            stepper_pan.setMaxSpeed(panDegreesToSteps(MAX_PAN_SPEED *0.7));
+            stepper_slide.setMaxSpeed(sliderMillimetresToSteps(MAX_SLIDE_SPEED *0.7));
+            currentSlideSpeed = map(abs(currentAnalogStick.LposX - 128), 0, 128, 0, MAX_SLIDE_SPEED *0.7 );
+            currentPanSpeed =  map(abs(currentAnalogStick.RposX - 128), 0, 128, 0, MAX_PAN_SPEED *0.7 );
+
+
+
+        }
+
+
+      
+    
+           
+
+     
         if (currentAnalogStick.LposX > 128 + ANALOG_DEADZONE)
         {
             stepper_slide.moveTo(stepper_slide.currentPosition() + 1);
@@ -723,7 +800,8 @@ void Slider::run()
             if (stepper_slide.distanceToGo() != 0)
             {
                 multiStepper.run();
-                if (millis() - lastShotTime > timelapseInterval * 1000 && timelapseInterval){
+                if (millis() - lastShotTime > timelapseInterval * 1000 && timelapseInterval)
+                {
                     triggerCamera();
                     lastShotTime = millis();
                 }
@@ -740,18 +818,20 @@ void Slider::run()
 void Slider::updateScreen(bool forceUpdate)
 {
     static int progress = 0;
-    static Mode lastMode ;
+    static Mode lastMode;
 
     if (millis() - lastScreenUpdate > screenUpdateMills || forceUpdate)
     {
         // Screen updating logic when auto program is not running
         if (!isMoving && !autoMoveRunning)
         {
-            
-            if (lastMode == NULL){
+
+            if (lastMode == NULL)
+            {
                 lcd.clear();
             }
-            else if (lastMode != currentMode){
+            else if (lastMode != currentMode)
+            {
                 lcd.clear();
             }
             lastMode = currentMode;
@@ -760,19 +840,20 @@ void Slider::updateScreen(bool forceUpdate)
             lcd.printf("%-9s  ", modeString[currentMode]);
 
             lcd.setCursor(15, 0);
-            if (canonBLERemote.isConnected()){
+            if (alphaBLERemote.isConnected())
+            {
                 lcd.write(0);
-            }else{
+            }
+            else
+            {
                 lcd.print(" ");
             }
-    
 
             if (currentMode == ORBIT || currentMode == SLIDE)
             {
                 lcd.setCursor(0, 1);
                 lcd.printf("speed:%-2.f   ", 10.0 * currentSpeedScale);
 
-                
                 lcd.setCursor(11, 1);
                 if (current_keyframe_index == -1)
                 {
@@ -784,7 +865,8 @@ void Slider::updateScreen(bool forceUpdate)
                 }
                 else if (current_keyframe_index == 1)
                 {
-                    if (currentMode == ORBIT && !calculateTargetCoordinate()){
+                    if (currentMode == ORBIT && !calculateTargetCoordinate())
+                    {
                         lcd.printf("ERROR");
                     }
                     lcd.printf("READY");
@@ -797,7 +879,7 @@ void Slider::updateScreen(bool forceUpdate)
                 // sprintf("%dm",time,timelapseDuration[timelapseSelectedtime]);
                 lcd.printf("I:%d", timelapseInterval);
                 lcd.setCursor(0, 1);
-                lcd.printf("T:%dm S:%-2d", timelapseDuration[timelapseSelectedtime],  timelapseShutterTime);
+                lcd.printf("T:%dm S:%-2d", timelapseDuration[timelapseSelectedtime], timelapseShutterTime);
 
                 lcd.setCursor(11, 1);
                 if (current_keyframe_index == -1)
@@ -812,12 +894,14 @@ void Slider::updateScreen(bool forceUpdate)
                 {
                     lcd.printf("READY");
                 }
-            }else if (currentMode == SETTINGS){
-                lcd.setCursor(0,1);
-                lcd.print("Pair EOS ");
+            }
+            else if (currentMode == SETTINGS)
+            {
+                lcd.setCursor(0, 1);
+                lcd.print("Pair SONY ");
 
-                lcd.setCursor(9,1);
-                switch (eosPairingProcess)
+                lcd.setCursor(9, 1);
+                switch (BLEPairingProcess)
                 {
                 case 0:
                     lcd.print("   PAIR");
@@ -839,9 +923,8 @@ void Slider::updateScreen(bool forceUpdate)
 
         if (autoMoveRunning)
         {
-            if(currentMode == TIMELAPSE){
-
-
+            if (currentMode == TIMELAPSE)
+            {
 
                 if (stepper_slide.distanceToGo() != 0)
                 {
@@ -864,11 +947,11 @@ void Slider::updateScreen(bool forceUpdate)
                     progress = newProgress;
                 }
             }
-            else if (forceUpdate){
+            else if (forceUpdate)
+            {
                 lcd.setCursor(0, 1);
                 lcd.printf("RUNNING..       ");
             }
-
         }
         lastScreenUpdate = millis();
     }

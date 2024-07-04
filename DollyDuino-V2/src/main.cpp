@@ -66,7 +66,6 @@ void setup()
 
         slider.onAnalogStickChanged(0x80, 0x80,  0x80, 0x80);
         
-        
 }
 
 
